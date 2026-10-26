@@ -1,0 +1,12 @@
+# Optional metadata / pytest only. Install deps via requirements.txt + ./setup.sh
+# (no hatchling / no pip install -e .)
+
+[project]
+name = "dwh-compare"
+version = "0.1.0"
+description = "Compare data between two PostgreSQL DWH instances"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

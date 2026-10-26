@@ -1,0 +1,5 @@
+click>=8.1
+psycopg2-binary>=2.9.9
+pydantic>=2.5
+PyYAML>=6.0
+rich>=13.7

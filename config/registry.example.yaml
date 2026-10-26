@@ -1,0 +1,20 @@
+# Какие таблицы проверять.
+# Поля не перечисляются: сравниваются все, кроме ignore (config.yaml).
+# Строки матчятся по PRIMARY KEY таблицы (авто). При необходимости:
+#   keys: [order_nk]
+
+tables:
+  - schema: mart
+    table: orders
+    enabled: true
+    # date_column: created_at
+    # ignore_columns:
+    #   - ingest_ts
+
+  - schema: mart
+    table: customers
+    enabled: true
+
+  - schema: raw
+    table: payments
+    enabled: false

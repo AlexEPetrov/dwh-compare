@@ -1,0 +1,39 @@
+# One PostgreSQL server, two databases (prod vs test).
+# Later, if hosts diverge, replace this with full `source:` / `target:` blocks
+# (see README). Secrets: ${VAR} or ${VAR:-default}
+
+server:
+  host: ${DWH_HOST:-localhost}
+  port: ${DWH_PORT:-5432}
+  user: ${DWH_USER:-readonly}
+  password: ${DWH_PASSWORD:-}
+  # sslmode: require
+
+source_database: ${DWH_SOURCE_DB:-dwh_prod}
+target_database: ${DWH_TARGET_DB:-dwh_test}
+
+# Technical columns excluded from MD5 payload (case-insensitive).
+# Per-table extras: registry.yaml → ignore_columns
+ignore_columns:
+  - id
+  - rid          # surrogate PK — ignored for matching & MD5
+  - source_id
+  - created_at
+  - modified_at
+  - updated_at
+  - deleted_at
+  - created_by
+  - modified_by
+  - updated_by
+  - row_hash
+  - etl_batch_id
+  - load_id
+  - _loaded_at
+  - _updated_at
+
+
+# Differing key samples kept in the report
+sample_limit: 20
+
+# Rows per round-trip from each server-side cursor
+fetch_size: 10000
