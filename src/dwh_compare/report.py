@@ -43,7 +43,7 @@ def print_report(report: RunReport) -> None:
     overview.add_column("Match", justify="right")
     overview.add_column("Only src", justify="right")
     overview.add_column("Only tgt", justify="right")
-    overview.add_column("≠ cols", justify="right")
+    overview.add_column("≠ rows", justify="right")  # same key, different payload MD5
 
     for r in report.results:
         style = {

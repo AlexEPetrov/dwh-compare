@@ -12,7 +12,7 @@ from psycopg2.extensions import connection as PgConnection
 from dwh_compare.db import (
     fetch_example_by_md5,
     fetch_payload_by_keys,
-    list_columns,
+    list_column_types,
     list_primary_key,
     load_key_md5_map,
     load_md5_list,
@@ -41,8 +41,10 @@ def compare_table(
     period: Period | None,
 ) -> TableResult:
     try:
-        src_cols = list_columns(source_conn, entry)
-        tgt_cols = list_columns(target_conn, entry)
+        src_types = list_column_types(source_conn, entry)
+        tgt_types = list_column_types(target_conn, entry)
+        src_cols = list(src_types.keys())
+        tgt_cols = list(tgt_types.keys())
         if not src_cols:
             return TableResult(
                 table=entry.display_name,
@@ -57,6 +59,8 @@ def compare_table(
             )
 
         common = [c for c in src_cols if c.lower() in {x.lower() for x in tgt_cols}]
+        # Prefer source type names for hashing (same logical types assumed)
+        col_types = {c: src_types[c] for c in common}
 
         if entry.keys:
             raw_keys = entry.keys
@@ -92,6 +96,7 @@ def compare_table(
                 period,
                 date_col,
                 config,
+                col_types,
             )
 
         logger.info(
@@ -103,10 +108,24 @@ def compare_table(
         )
 
         source_map = load_key_md5_map(
-            source_conn, entry, key_cols, payload, period, date_col, config.fetch_size
+            source_conn,
+            entry,
+            key_cols,
+            payload,
+            period,
+            date_col,
+            config.fetch_size,
+            col_types,
         )
         target_map = load_key_md5_map(
-            target_conn, entry, key_cols, payload, period, date_col, config.fetch_size
+            target_conn,
+            entry,
+            key_cols,
+            payload,
+            period,
+            date_col,
+            config.fetch_size,
+            col_types,
         )
 
         result, differ_keys = diff_md5_maps(
@@ -149,16 +168,29 @@ def compare_md5_only(
     period: Period | None,
     date_col: str | None,
     config: AppConfig,
+    column_types: dict[str, str] | None = None,
 ) -> TableResult:
     """No usable key (PK ignored) — compare multisets of row MD5."""
     src = Counter(
         load_md5_list(
-            source_conn, entry, payload, period, date_col, config.fetch_size
+            source_conn,
+            entry,
+            payload,
+            period,
+            date_col,
+            config.fetch_size,
+            column_types,
         )
     )
     tgt = Counter(
         load_md5_list(
-            target_conn, entry, payload, period, date_col, config.fetch_size
+            target_conn,
+            entry,
+            payload,
+            period,
+            date_col,
+            config.fetch_size,
+            column_types,
         )
     )
 

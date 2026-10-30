@@ -40,18 +40,35 @@ def table_ident(entry: TableEntry) -> sql.Composed:
     )
 
 
+_NUMERIC_TYPES = frozenset(
+    {
+        "numeric",
+        "decimal",
+        "real",
+        "double precision",
+        "float4",
+        "float8",
+    }
+)
+
+
 def list_columns(conn: PgConnection, entry: TableEntry) -> list[str]:
+    return list(list_column_types(conn, entry).keys())
+
+
+def list_column_types(conn: PgConnection, entry: TableEntry) -> dict[str, str]:
+    """column_name → information_schema.data_type (lowercase)."""
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_schema = %s AND table_name = %s
             ORDER BY ordinal_position
             """,
             (entry.schema_name, entry.table),
         )
-        return [r["column_name"] for r in cur.fetchall()]
+        return {r["column_name"]: (r["data_type"] or "").lower() for r in cur.fetchall()}
 
 
 def list_primary_key(conn: PgConnection, entry: TableEntry) -> list[str]:
@@ -116,11 +133,12 @@ def load_md5_list(
     period: Period | None,
     date_column: str | None,
     fetch_size: int,
+    column_types: dict[str, str] | None = None,
 ) -> list[str]:
     """Stream row MD5s (no key) — for when PK is fully ignored."""
     where_sql, params = build_where(entry, period, date_column)
     query = sql.SQL("SELECT {} AS row_md5 FROM {}{}").format(
-        _md5_expr(payload_columns),
+        _md5_expr(payload_columns, column_types),
         table_ident(entry),
         where_sql,
     )
@@ -185,21 +203,42 @@ def build_where(
     return sql.SQL(" WHERE ") + sql.SQL(" AND ").join(parts), params
 
 
-def _md5_expr(payload_columns: Sequence[str]) -> sql.Composed:
+def _col_text_expr(col: str, data_type: str | None) -> sql.Composed:
+    """
+    Stable text for hashing/compare.
+
+    Numerics: strip trailing zeros so 123.0 == 123.000 (scale noise in ::text).
+    """
+    ident = sql.Identifier(col)
+    if (data_type or "").lower() in _NUMERIC_TYPES:
+        # NULL → sentinel; '123.000' → '123'; '0.0' → '0'
+        return sql.SQL(
+            "CASE WHEN {c} IS NULL THEN {null} "
+            "ELSE COALESCE(NULLIF(RTRIM(RTRIM(({c})::text, '0'), '.'), ''), '0') END"
+        ).format(c=ident, null=_NULL_SENTINEL)
+    return sql.SQL("COALESCE({c}::text, {null})").format(c=ident, null=_NULL_SENTINEL)
+
+
+def _md5_expr(
+    payload_columns: Sequence[str],
+    column_types: dict[str, str] | None = None,
+) -> sql.Composed:
     if not payload_columns:
         return sql.SQL("md5('')")
 
+    types = column_types or {}
     pieces: list[sql.Composable] = []
     for i, col in enumerate(payload_columns):
         if i:
             pieces.append(_SEP)
-        pieces.append(
-            sql.SQL("COALESCE({}::text, {})").format(
-                sql.Identifier(col),
-                _NULL_SENTINEL,
-            )
-        )
+        pieces.append(_col_text_expr(col, types.get(col)))
     return sql.SQL("md5({})").format(sql.SQL(" || ").join(pieces))
+
+
+def _normalize_numeric_str(as_str: str) -> str:
+    if "." in as_str:
+        as_str = as_str.rstrip("0").rstrip(".")
+    return as_str or "0"
 
 
 def stringify(value: Any) -> Any:
@@ -209,7 +248,10 @@ def stringify(value: Any) -> Any:
         return value.isoformat()
     type_name = type(value).__name__
     if type_name == "Decimal":
-        return format(value, "f")
+        return _normalize_numeric_str(format(value, "f"))
+    if isinstance(value, float):
+        # Avoid float repr noise; align with numeric-ish compare
+        return _normalize_numeric_str(format(value, "f"))
     if isinstance(value, (bytes, memoryview)):
         return bytes(value).hex()
     return value
@@ -223,6 +265,7 @@ def load_key_md5_map(
     period: Period | None,
     date_column: str | None,
     fetch_size: int,
+    column_types: dict[str, str] | None = None,
 ) -> dict[tuple[Any, ...], str]:
     """
     Stream key + md5 into a dict. No ORDER BY (avoids heavy sort on PG).
@@ -233,7 +276,7 @@ def load_key_md5_map(
     key_sql = sql.SQL(", ").join(sql.Identifier(c) for c in key_columns)
     query = sql.SQL("SELECT {}, {} AS row_md5 FROM {}{}").format(
         key_sql,
-        _md5_expr(payload_columns),
+        _md5_expr(payload_columns, column_types),
         table_ident(entry),
         where_sql,
     )
@@ -312,6 +355,7 @@ def fetch_example_by_md5(
 
     where_sql, params = build_where(entry, period, date_column)
     col_sql = sql.SQL(", ").join(sql.Identifier(c) for c in payload_columns)
+    # Types optional here — sample path; prefer passing via caller later if needed
     md5_expr = _md5_expr(payload_columns)
 
     # Filter in outer query so we don't scan more than needed beyond period
